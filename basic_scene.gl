@@ -1,0 +1,247 @@
+// Basic setup for http://editor.thebookofshaders.com/
+
+#ifdef GL_ES
+precision mediump float;
+#endif
+
+uniform vec2 u_resolution;
+uniform vec2 u_mouse;
+uniform float u_time;
+
+vec2 iResolution = u_resolution;
+vec2 iMouse = u_mouse;
+float iTime = u_time;
+
+
+#define PI (3.141)
+#define TWOPI (2.*PI)
+
+#define MARCH_MAX_STEPS (512)
+#define MARCH_MAX_DIST (1000.)
+#define MARCH_HIT_DIST (0.0001)
+
+struct Ray {
+    vec3 o;			// origin
+    vec3 d;			// direction
+};
+
+struct Light { 
+    vec3 o;			// origin
+    vec3 i;			// intensity
+};
+
+struct Material {
+	vec3 d;			// diffuse
+    vec3 s;			// specular
+    float shiny;	// shininess
+};
+
+struct SceneObj {
+    float sdf;
+	Material material;
+};
+
+
+vec3 translate(vec3 p, vec3 t) {
+    return p - t;
+}
+
+mat2 rotate2d(float theta) { 
+    return mat2(cos(theta), -sin(theta), 
+                sin(theta), cos(theta)); 
+}
+
+/********* 
+Signed Distance Functions (SDFs)
+
+References for SDFs:
+https://youtu.be/Ff0jJyyiVyw (ArtOfCode)
+https://youtu.be/AfKGMUDWfuE (ArtOfCode)
+https://youtu.be/Vmb7VGBVZJA (ArtOfCode)
+https://www.iquilezles.org/www/articles/distfunctions/distfunctions.htm (Inigo Quilez)
+**********/
+
+float sdfSphere(vec3 p, float r) {
+    return length(p) - r;
+}
+
+float sdfPlane(vec3 p, vec3 n) {
+    return dot(p, n);
+}
+
+SceneObj min(SceneObj s1, SceneObj s2) {
+    if (s1.sdf < s2.sdf) {
+        return s1;
+    } else {
+        return s2;
+    }
+}
+
+// Define all objects in the scene (SDFs + materials)
+SceneObj mapScene(vec3 p) {
+    float sphere1Sdf= sdfSphere(translate(p, vec3(0., 1., 0.)), 0.904);
+    sphere1Sdf /= 2.;
+    Material sphere1Mat = Material(
+        vec3(0., 1., 0.),
+        vec3(0.618,0.655,0.627), 
+    	256.
+    );
+    SceneObj sphere1 = SceneObj(sphere1Sdf, sphere1Mat);
+    
+    float groundPlaneSdf = sdfPlane(p, normalize(vec3(0.000,0.690,0.000)));
+    Material groundPlaneMat = Material(
+        vec3(0.5),
+        vec3(0.265,0.265,0.265), 
+        256.
+    );
+    SceneObj groundPlane = SceneObj(groundPlaneSdf, groundPlaneMat);
+    
+    
+    SceneObj s = groundPlane;
+    s = min(groundPlane, sphere1);
+    //s = sphere1;
+    return s ;
+}
+
+float sdfScene(vec3 p) {
+	SceneObj objAtP = mapScene(p);
+    return objAtP.sdf;
+}
+
+
+// Scene normals using SDF gradient
+// References for normal calculation: 
+// http://www.michaelwalczyk.com/blog/2017/5/25/ray-marching (Michael Walczyk)
+// https://www.iquilezles.org/www/articles/normalsSDF/normalsSDF.htm (Inigo Quilez)
+vec3 sceneNormal(vec3 p) {
+    vec2 epsilon = vec2(0.01, 0.);
+    return normalize(vec3(
+        sdfScene(p + epsilon.xyy) - sdfScene(p - epsilon.xyy),
+        sdfScene(p + epsilon.yxy) - sdfScene(p - epsilon.yxy),
+        sdfScene(p + epsilon.yyx) - sdfScene(p - epsilon.yyx)
+    ));
+}
+
+// References for raymarching:
+// http://www.michaelwalczyk.com/blog/2017/5/25/ray-marching (Michael Walczyk)
+// https://youtu.be/PGtv-dBi2wE (ArtofCode)
+float rayMarch(Ray r) {
+    // Accumulated distance to ray origin
+    float dO = 0.;
+    for (int i = 0; i < MARCH_MAX_STEPS; i++) {
+        vec3 p = r.o + (dO * r.d);
+        // Current distance to scene
+        float dS = sdfScene(p);
+        dO += dS;
+        if (abs(dS) < MARCH_HIT_DIST || dO >= MARCH_MAX_DIST) {
+            return dO;
+        }
+    }
+    return MARCH_MAX_DIST;
+}
+
+
+// References for camera:
+// https://youtu.be/PBxuVlp7nuM (ArtofCode)
+// https://youtu.be/2SaGgTlkhSs (3dGraphicsFromScratch)
+Ray cameraViewRay(vec2 uv, vec3 eye, vec3 lookat, float fov, float roll) {
+    // Axes
+    vec3 f = normalize(lookat - eye);
+    vec3 r = cross(vec3(0., 1., 0.), f);
+    vec3 u = cross(f, r);
+    // Image plane
+    float zoom = 1. / tan(fov / 2.);
+    vec3 c = eye + f*zoom;
+    uv *= rotate2d(roll);
+    vec3 i = c + (uv.x*r) + (uv.y*u);
+    // Ray from camera origin to intersection with image plane
+    return Ray(eye, i-eye);
+}
+
+
+// References for Lighting
+// http://www.michaelwalczyk.com/blog/2017/5/25/ray-marching (Michael Walczyk)
+// https://en.wikipedia.org/wiki/Phong_reflection_model
+vec3 illuminateSingleLight(vec3 p, Light l, vec3 eye) {
+    vec3 lDir = normalize(l.o - p);
+    float lDist = distance(p, l.o);
+    vec3 intensity = l.i / (lDist*lDist);
+    vec3 normal = sceneNormal(p);
+    SceneObj obj = mapScene(p);
+    
+    // Diffuse illumination
+    float diffuse = dot(normal, lDir);
+    vec3 diffuseIllum = diffuse * intensity * obj.material.d;
+    // Specular illumination
+    vec3 r = reflect(lDir, normal);
+    vec3 viewDir = normalize(eye - p);
+    float specular = dot(r, viewDir);
+    vec3 specularIllum = pow(specular, obj.material.shiny) * obj.material.s * intensity;
+    
+    vec3 illum = diffuseIllum + specularIllum;
+    // Estimate hard shadow
+    // Reference for hard shadows
+    // https://youtu.be/PGtv-dBi2wE (ArtOfCode)
+    vec3 pNearSurface = p + (normal * MARCH_HIT_DIST * 2.);
+    float dSTowardsLight = rayMarch(Ray(pNearSurface, lDir));
+    if (dSTowardsLight < lDist) {
+        illum *= 0.15;
+    }
+    
+    return illum;
+}
+
+
+// Define all lights in the scene
+vec3 illuminateScene(vec3 p, vec3 eye) {
+    vec3 l1Pos = vec3(-0.5, 5., 4.);
+    vec3 l1Intensity = vec3(20.);
+    Light l1 = Light(l1Pos, l1Intensity);
+    
+    vec3 l2Pos = vec3(6., 4., -7.);
+    vec3 l2Intensity = vec3(15.);
+    Light l2 =Light(l2Pos, l2Intensity);
+    
+    vec3 i1 = illuminateSingleLight(p, l1, eye);
+    vec3 i2 = illuminateSingleLight(p, l2, eye);
+    return i1 + i2;
+}
+
+
+vec3 renderScene(Ray viewRay) {
+    // Distance to scene
+    float dS = rayMarch(viewRay);
+    if (dS >= MARCH_MAX_DIST) {
+        return vec3(0.1);
+    } else {
+        // Point lives on a shape boundary
+        vec3 p = viewRay.o + dS*viewRay.d;
+        return illuminateScene(p, viewRay.o);
+    }
+}
+
+
+void main() {
+    vec2 uv = gl_FragCoord.xy/iResolution.xy;
+    // Move origin to center of viewing plane
+    uv -= 0.5;
+    // Normalize aspect ratio
+    uv.x *= iResolution.x/iResolution.y;
+    // Remap to [-1, -1] x [1, 1]
+    uv *= 2.;
+    
+    vec2 mouse = iMouse / iResolution;
+    
+    // CAMERA SETUP
+    vec2 cameraXZ = 6. * vec2(cos(mouse.x*TWOPI), sin(mouse.x*TWOPI));
+    vec3 eye = vec3(cameraXZ[0], 0.2 + mouse.y*10., cameraXZ[1]);
+    vec3 lookat = vec3(0., 0., 0.);
+    Ray viewRay = cameraViewRay(uv, eye, lookat,  (PI / 2.5), 0.);
+
+    // CALCULATE PIXEL COLOR
+    vec3 color = vec3(0.);
+    color = renderScene(viewRay);
+
+
+    gl_FragColor = vec4(color,1.0);
+}
