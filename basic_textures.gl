@@ -1,0 +1,423 @@
+// SHADERTOY VERSION - https://www.shadertoy.com/view/wsSfRz
+
+#ifdef GL_ES
+precision mediump float;
+#endif
+
+uniform vec2 u_resolution;
+uniform vec2 u_mouse;
+uniform float u_time;
+
+vec2 iResolution = u_resolution;
+vec2 iMouse = u_mouse;
+float iTime = u_time;
+
+
+#define PI (3.141)
+#define TWOPI (2.*PI)
+#define RAND_SEED (87629.3453)
+
+#define MARCH_MAX_STEPS (512)
+#define MARCH_MAX_DIST (1000.)
+#define MARCH_HIT_DIST (0.0001)
+
+#define AO_ITERATIONS (5)
+#define GLOBAL_AO (0.103)
+
+#define SHADE_AO_ONLY (false)
+
+// Material IDs
+#define MATERIAL_GROUND_PLANE (0)
+#define MATERIAL_CHECKERBOARD (1)
+
+
+
+struct Ray {
+    vec3 o;			// origin
+    vec3 d;			// direction
+};
+
+struct PointLight { 
+    vec3 o;			// origin
+    vec3 d;			// diffuse intensity
+    vec3 s; 		// specular intensity
+    vec3 a;			// ambient intensity
+};
+
+struct DirectionLight {
+    vec3 dir;		// direction
+    vec3 d;			// diffuse intensity
+    vec3 s; 		// specular intensity
+    vec3 a;			// ambient intensity
+};
+
+struct Material {
+    vec3 d;			// diffuse
+    vec3 s;			// specular
+    vec3 a;			// ambient
+    float shiny;	// shininess
+};
+
+struct SceneObj {
+    float sdf;
+	int matId;
+};
+
+
+vec3 translate(vec3 p, vec3 t) {
+    return p - t;
+}
+
+mat2 rotate2d(float theta) { 
+    return mat2(cos(theta), -sin(theta), 
+                sin(theta), cos(theta)); 
+}
+
+/********* Signed Distance Functions (SDFs)
+
+References for SDFs:
+Sphere, Cube, Torus, Capsule, Cylinder - https://youtu.be/Ff0jJyyiVyw (ArtOfCode)
+Rotate, Scale, Union, Intersection, Difference - https://youtu.be/AfKGMUDWfuE (ArtOfCode)
+Onioning, Displacement Mapping, Twisting - https://youtu.be/Vmb7VGBVZJA (ArtOfCode)
+
+https://www.iquilezles.org/www/articles/distfunctions/distfunctions.htm (Inigo Quilez)
+**********/
+
+float sdfSphere(vec3 p, float r) {
+    return length(p) - r;
+}
+
+float sdfPlane(vec3 p, vec3 n) {
+    return dot(p, n);
+}
+
+float sdfTorus(vec3 p, vec2 r) {
+    // Distance to major circle
+    float x = length(p.xz) - r[0];
+    return length(vec2(x, p.y)) - r[1];
+}
+
+SceneObj objUnion(SceneObj s1, SceneObj s2) {
+    if (s1.sdf < s2.sdf) {
+        return s1;
+    } else {
+        return s2;
+    }
+}
+
+
+// Define all objects in the scene
+// Use material Ids so we can wait until later to calculate Material colors
+// Materials using textures need scene normal, which we can't get until after
+// scene SDF is defined
+SceneObj mapScene(vec3 p) {
+    float sphere1Sdf= sdfSphere(translate(p, vec3(0., 1., 0.)), 1.280);
+    sphere1Sdf /= 2.;
+
+    Material greenMat = Material(
+        vec3(0.000,0.915,0.000),
+        vec3(0.788,0.835,0.799), 
+        vec3(0.020,0.190,0.025),
+    	256.
+    );
+    
+    sphere1Sdf = sdfTorus(translate(p, vec3(0., 1., 0.)), vec2(2.,0.380));
+    sphere1Sdf /= 2.;
+    //greenMat = checkerboardTexture(p.xz, 5.648, 256.);
+    SceneObj sphere1 = SceneObj(sphere1Sdf, 1);
+    
+    float groundPlaneSdf = sdfPlane(p, normalize(vec3(0.000,0.690,0.000)));
+    SceneObj groundPlane = SceneObj(groundPlaneSdf, MATERIAL_GROUND_PLANE);
+
+    
+    SceneObj s = groundPlane;
+    s = objUnion(groundPlane, sphere1);
+    return s ;
+}
+
+float sdfScene(vec3 p) {
+	SceneObj objAtP = mapScene(p);
+    return objAtP.sdf;
+}
+
+
+// Scene normals using SDF gradient
+// References for normal calculation: 
+// http://www.michaelwalczyk.com/blog/2017/5/25/ray-marching (Michael Walczyk)
+// https://www.iquilezles.org/www/articles/normalsSDF/normalsSDF.htm (Inigo Quilez)
+vec3 sceneNormal(vec3 p) {
+    vec2 epsilon = vec2(0.01, 0.);
+    return normalize(vec3(
+        sdfScene(p + epsilon.xyy) - sdfScene(p - epsilon.xyy),
+        sdfScene(p + epsilon.yxy) - sdfScene(p - epsilon.yxy),
+        sdfScene(p + epsilon.yyx) - sdfScene(p - epsilon.yyx)
+    ));
+}
+
+
+/********** MATERIALS **********/
+
+// Reference for pseudorandom:
+// https://thebookofshaders.com/10/
+float rand2(vec2 uv) {
+    return fract(
+        RAND_SEED*
+        	(sin(dot(uv, vec2(21.243123, 15.23234)))
+        ));
+}
+
+// Reference for Value Noise:
+// https://thebookofshaders.com/11/
+float valueNoiseColor(vec2 uv, float scale) {
+    uv *= scale;
+    vec2 gridIdx = floor(uv);
+    vec2 m = smoothstep(0., 1., fract(uv));
+    float a = rand2(gridIdx);
+    float b = rand2(gridIdx + vec2(1., 0.));
+    float c = rand2(gridIdx + vec2(0., 1.));
+    float d = rand2(gridIdx + vec2(1.));
+    float ab = mix(a, b, m.x);
+    float cd = mix(c, d, m.x);
+    float abcd = mix(ab, cd, m.y);
+    return abcd;
+}
+
+// Reference for Tri-Planar Mapping:
+// https://gamedevelopment.tutsplus.com/articles/use-tri-planar-texture-mapping-for-better-terrain--gamedev-13821
+Material valueNoiseTexture(vec3 p, vec3 normal, float scale, float shiny) {
+	vec3 weights = abs(normal);
+    weights = pow(weights, vec3(1.));
+    weights /= (weights.x + weights.y + weights.z + 0.00001);
+    
+    float xTexture = valueNoiseColor(p.yz, scale);
+    float yTexture = valueNoiseColor(p.xz, scale);
+    float zTexture = valueNoiseColor(p.xy, scale);
+    float texture = (xTexture * weights.x) + (yTexture * weights.y) + (zTexture * weights.z);
+    return Material(
+        vec3(texture),
+        vec3(0.900,0.900,0.900),
+        vec3(texture * 0.364),
+        shiny
+    );
+}
+
+
+Material materialLookup(int matId, vec3 p, vec3 n) {
+    if (matId == MATERIAL_GROUND_PLANE) {
+        // Plane material
+        return Material(
+        	vec3(0.5),
+        	vec3(0.265,0.265,0.265), 
+        	vec3(0.500,0.488,0.500),
+        	256.
+        );
+    } else if (matId == MATERIAL_CHECKERBOARD) {
+        return valueNoiseTexture(p, n, 7.5 , 256.);
+    }
+}
+
+
+// References for raymarching:
+// http://www.michaelwalczyk.com/blog/2017/5/25/ray-marching (Michael Walczyk)
+// https://youtu.be/PGtv-dBi2wE (ArtofCode)
+float rayMarch(Ray r) {
+    // Accumulated distance to ray origin
+    float dO = 0.;
+    for (int i = 0; i < MARCH_MAX_STEPS; i++) {
+        vec3 p = r.o + (dO * r.d);
+        // Current distance to scene
+        float dS = sdfScene(p);
+        dO += dS;
+        if (abs(dS) < MARCH_HIT_DIST || dO >= MARCH_MAX_DIST) {
+            return dO;
+        }
+    }
+    return MARCH_MAX_DIST;
+}
+
+
+// References for camera:
+// https://youtu.be/PBxuVlp7nuM (ArtofCode)
+// https://youtu.be/2SaGgTlkhSs (3dGraphicsFromScratch)
+Ray cameraViewRay(vec2 uv, vec3 eye, vec3 lookat, float fov, float roll) {
+    // Axes
+    vec3 f = normalize(lookat - eye);
+    vec3 r = cross(vec3(0., 1., 0.), f);
+    vec3 u = cross(f, r);
+    // Image plane
+    float zoom = 1. / tan(fov / 2.);
+    vec3 c = eye + f*zoom;
+    uv *= rotate2d(roll);
+    vec3 i = c + (uv.x*r) + (uv.y*u);
+    // Ray from camera origin to intersection with image plane
+    return Ray(eye, i-eye);
+}
+
+
+/********** LIGHTING **********/
+
+// Reference for shadows: 
+// https://youtu.be/2YZClgDWCaM (3dGraphicsFromScratch)
+// http://www.polygonpi.com/?p=318 (Polygon Pi)
+// https://www.iquilezles.org/www/articles/rmshadows/rmshadows.htm (Inigo Quilez)
+float calcShadow(Ray shadowRay, float maxMarch, float k) {
+    // Shadow increases when ray from surface to light gets closer to scene (dS gets smaller)
+    // More distant objects cast darker shadows (dO gets larger)
+    float shadowMultiplier = 1.;
+    float dO = 0.;
+    for (int i = 0; i < MARCH_MAX_STEPS; i++) {
+        if (dO > maxMarch) { break; }
+        vec3 p = shadowRay.o + (dO * shadowRay.d);
+        float dS = sdfScene(p);
+        if (abs(dS) < MARCH_HIT_DIST) {
+            // Hit surface -- we are in a shadow
+            return 0.;
+        }
+        dO += dS;
+        shadowMultiplier = min(shadowMultiplier, k * dS / dO);
+    }
+	return clamp(shadowMultiplier, 0., 1.);
+}
+
+// Reference for ambient occlusion:
+// https://youtu.be/6zYTrFRVGiU (3dGraphicsFromScratch)
+float calcAO(vec3 p, vec3 normal, float epsilon) {
+    float aoMultiplier = 0.;
+    float weight = 0.5;
+    for (int i = 1; i <= AO_ITERATIONS ; i++) {
+        float t = epsilon * float(i);
+        aoMultiplier += (weight * (1. - (t - sdfScene(p + t*normal))));
+        weight /= 2.;
+    }
+    return aoMultiplier;
+}
+
+
+// Reference for lighting:
+// Basics - http://www.michaelwalczyk.com/blog/2017/5/25/ray-marching (Michael Walczyk)
+// Diffuse - https://youtu.be/9VJReTr7YXY (3dGraphicsFromScratch)
+// Diffuse - shadows - https://youtu.be/PGtv-dBi2wE (ArtOfCode)
+vec3 illuminateSingleLight(vec3 p, vec3 lDir, vec3 lDiffuse, vec3 lSpec, vec3 lAmbient, vec3 eye) {
+    vec3 normal = sceneNormal(p);
+    SceneObj obj = mapScene(p);
+    int matId = obj.matId;
+    Material mat = materialLookup(obj.matId, p, normal);
+    // DIRECT LIGHTING
+    // Diffuse illumination
+    float diffuse = dot(normal, lDir);
+    vec3 diffuseIllum = diffuse * lDiffuse * mat.d;
+    // Specular illumination
+    vec3 r = reflect(lDir, normal);
+    vec3 viewDir = normalize(eye - p);
+    float specular = dot(r, viewDir);
+    vec3 specularIllum = pow(specular, mat.shiny) * mat.s * lSpec;
+    vec3 directLight = diffuseIllum + specularIllum;
+    // Estimate shadow
+    vec3 pNearSurface = p + (normal * MARCH_HIT_DIST * 2.);
+    float shadow = calcShadow(Ray(pNearSurface, lDir), 100., 3.);
+    directLight *= shadow;
+    // INDIRECT LIGHTING
+    vec3 ambientIllum = lAmbient * mat.a;
+    float ambientOcclusion = calcAO(p, normal, GLOBAL_AO);
+    vec3 indirectLight = ambientIllum * ambientOcclusion;
+    
+    
+    vec3 illum = directLight + indirectLight;
+    
+    if (SHADE_AO_ONLY) {
+        return vec3(ambientOcclusion);
+    }
+
+    return clamp(illum, 0., 1.);
+}
+
+
+// DirectionalLight
+vec3 illuminateSingleLight(vec3 p, DirectionLight l, vec3 eye) {
+    vec3 illum = illuminateSingleLight(p, l.dir, l.d, l.s, l.a, eye);
+    return illum;
+}
+
+
+// Point light
+vec3 illuminateSingleLight(vec3 p, PointLight l, vec3 eye) {
+    vec3 lDir = normalize(l.o - p);
+    // Light intensity decayed by 1/(dist^2)
+    float lDist = distance(p, l.o);
+    float falloff = 1. / (lDist*lDist);
+    vec3 illum = illuminateSingleLight(p, lDir, l.d*falloff, l.s*falloff, l.a, eye);
+
+    return illum;
+}
+
+
+// Define all lights in the scene
+vec3 illuminateScene(vec3 p, vec3 eye) {
+    vec3 l1Pos = vec3(-0.5, 5., 4.);
+    vec3 l1Intensity = vec3(15.);
+    PointLight l1 = PointLight(
+        l1Pos, 			
+        l1Intensity, 
+        l1Intensity, 
+        vec3(0.265,0.265,0.265)
+    );
+    
+    vec3 l2Pos = vec3(6., 4., -7.);
+    vec3 l2Intensity = vec3(19.);
+    //PointLight l2 = PointLight(l2Pos, l2Intensity);
+    
+    DirectionLight l2 = DirectionLight(
+        normalize(vec3(1,1.,0.)), 
+        vec3(0.830,0.830,0.830),				// diffuse
+        vec3(0.960,0.960,0.960),				// specular
+        vec3(0.260,0.260,0.260)					// ambient
+    );
+    
+    vec3 i1 = illuminateSingleLight(p, l1, eye);
+    vec3 i2 = illuminateSingleLight(p, l2, eye);
+    return   i1 + i2;
+}
+
+
+/********* RENDER SCENE *********/
+
+vec3 renderScene(Ray viewRay) {
+    // Distance to scene
+    float dS = rayMarch(viewRay);
+    if (dS >= MARCH_MAX_DIST) {
+        return vec3(0.1);
+    } else {
+        // Point lives on a shape boundary
+        vec3 p = viewRay.o + dS*viewRay.d;
+        return illuminateScene(p, viewRay.o);
+    }
+}
+
+
+void main() {
+    vec2 uv = gl_FragCoord.xy/iResolution.xy;
+    // Move origin to center of viewing plane
+    uv -= 0.5;
+    // Normalize aspect ratio
+    uv.x *= iResolution.x/iResolution.y;
+    // Remap to [-1, -1] x [1, 1]
+    uv *= 2.;
+    
+    vec2 mouse = iMouse.xy / iResolution.xy;
+    
+    // CAMERA SETUP
+    vec2 cameraXZ = 6. * vec2(cos(mouse.x*TWOPI*2.), sin(mouse.x*TWOPI*2.));
+    vec3 eye = vec3(cameraXZ[0], 0.2 + mouse.y*15., cameraXZ[1]);
+    vec3 lookat = vec3(0., 0., 0.);
+    Ray viewRay = cameraViewRay(uv, eye, lookat,  (PI / 2.5), 0.);
+
+    // CALCULATE PIXEL COLOR
+    vec3 color = vec3(0.);
+    color = renderScene(viewRay);
+    
+    // Uncomment to see 2d value noise texture
+    //color = vec3(valueNoiseColor(uv, 5.472));
+
+
+    gl_FragColor = vec4(color,1.0);
+}
