@@ -1,0 +1,3 @@
+[submodule "opengl_utils"]
+	path = opengl_utils
+	url = https://github.com/blepfo/opengl_utils.git

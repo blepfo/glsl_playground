@@ -1,2 +1,8 @@
+stb_image.h
+
+*.swp
+*.ini
+*/obj/
+*.o
 *.pyc
 */__pycache__/
