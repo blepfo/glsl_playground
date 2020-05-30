@@ -31,7 +31,7 @@ IMGUI_SRC = $(wildcard /usr/local/include/imgui/*.cpp) \
 IMGUI_OBJ = $(call ObjFromSrc, $(IMGUI_SRC))
 
 # Compiler options
-CC = g++
+CC = g++ --std=c++17
 CPP_ARGS = -Wall
 
 all: main.o
@@ -48,7 +48,7 @@ main.o: $(IMGUI_OBJ) $(OPENGL_UTILS_OBJ)
 
 $(OPENGL_UTILS_OBJ): %.o : $(OPENGL_UTILS_SRC)
 	$(eval CPP_NAME := $(call FindCppSrc, $@, $^))
-	$(CC) $(CPP_ARGS) -c $(OPENGL_UTILS_INCLUDE) -o $@ $(CPP_NAME)
+	$(CC) $(CPP_ARGS) -c $(OPENGL_UTILS_INCLUDE) $(IMGUI_INCLUDE) -o $@ $(CPP_NAME)
 
 
 $(IMGUI_OBJ): %.o : $(IMGUI_SRC)
