@@ -8,22 +8,23 @@ uniform vec3 forward;
 uniform vec3 up;
 uniform vec3 right;
 
+uniform float MARCH_HIT_DIST;
+uniform float GLOBAL_AO;
 
-float iTime = 0.;
+
+float iTime = 4.7;
 
 
 #define PI (3.141)
 #define TWOPI (2.*PI)
 #define RAND_SEED (87629.3453)
 
-#define MARCH_MAX_STEPS (512)
-#define MARCH_MAX_DIST (1000.)
-#define MARCH_HIT_DIST (0.001)
+#define MARCH_MAX_STEPS (128)
+#define MARCH_MAX_DIST (100.)
 
-#define AO_ITERATIONS (1)
-#define GLOBAL_AO (0.327)
+#define AO_ITERATIONS (2)
 
-#define SHADE_AO_ONLY (false)
+#define SHADE_AO_ONLY (true)
 
 // Material IDs
 // Used so we can assign materials to objects
@@ -78,23 +79,6 @@ mat2 rotate2d(float theta) {
                 sin(theta), cos(theta)); 
 }
 
-vec2 repeat(vec2 p, float c) {
-    // Center around origin
-    p = p + (c/2.);
-    // Repeat after interval of c, recenter around origin
-    return mod(p, c) - (c / 2.);
-}
-
-vec2 repeat(vec2 p, float c, float l) {
-	// Center around origin
-    p = p + (c/2.);
-    // floor(p/c) == grid idxs for grid of size c
-    // by clamping floor(p/c) to +/- l, we only alow 
-    // repeating up to (2l+1) idxs
-    return (p - c*clamp(floor(p/c), -l, l)) - (c / 2.);
-}
-
-
 /********* Signed Distance Functions (SDFs)
 
 References for SDFs:
@@ -105,18 +89,8 @@ Onioning, Displacement Mapping, Twisting - https://youtu.be/Vmb7VGBVZJA (ArtOfCo
 https://www.iquilezles.org/www/articles/distfunctions/distfunctions.htm (Inigo Quilez)
 **********/
 
-float sdfSphere(vec3 p, float r) {
-    return length(p) - r;
-}
-
 float sdfPlane(vec3 p, vec3 n) {
     return dot(p, n);
-}
-
-float sdfTorus(vec3 p, vec2 r) {
-    // Distance to major circle
-    float x = length(p.xz) - r[0];
-    return length(vec2(x, p.y)) - r[1];
 }
 
 float sdfCube(vec3 p, vec3 halfSize) {
@@ -157,7 +131,7 @@ SceneObj mapScene(vec3 p) {
     
 	sphereP.y *= -1.;
     sphereP /= 2.;
-    #define iterations (4)
+    #define iterations (3)
     sphereP = translate(sphereP, vec3(0., -0.25, 0.));
     for (int i = 0; i < iterations; i++) {
         sphereP *= 3.;
@@ -176,10 +150,6 @@ SceneObj mapScene(vec3 p) {
 		sphereP = translate(sphereP, vec3(-1.,0.,0.));
     	sphereP = fold(sphereP, vec3(1., 1.,0.));
     }
-    
-    
-
-
 
     float sphere1Sdf = sdfCube(sphereP, vec3(1.));
     sphere1Sdf /= pow(3., float(iterations));
@@ -187,11 +157,10 @@ SceneObj mapScene(vec3 p) {
     
     float groundPlaneSdf = sdfPlane(p, normalize(vec3(0.,1.,0.)));
     SceneObj groundPlane = SceneObj(groundPlaneSdf, MATERIAL_GROUND_PLANE);
-
     
-    SceneObj s = groundPlane;
-    s = objUnion(groundPlane, sphere1);
-    s = sphere1;
+    // SceneObj s = groundPlane;
+    // s = objUnion(groundPlane, sphere1);
+    SceneObj s = sphere1;
     return s ;
 }
 

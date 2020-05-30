@@ -29,7 +29,7 @@ class MengerRenderer : public SimpleRenderer {
             int screenWidth, 
             int screenHeight, 
             const char* windowName,
-            Camera camera
+            Camera* camera
         ) : SimpleRenderer(screenWidth, screenHeight, windowName, true),
             camera(camera) {}
 
@@ -39,18 +39,19 @@ class MengerRenderer : public SimpleRenderer {
         unsigned int vbo;
         unsigned int ebo;
         Shader* shader;
-        Camera camera;
-
+        Camera* camera;
+        float ao=0.8;
+        float marchHitDist=0.01;
 };
 
 void MengerRenderer::initScene() {
         // Vertex data          
-		float vertices[] = {
+        float vertices[] = {
             -1.0, -1.0, 0.0,
             -1.0, 1.0, 0.0,
             1.0, -1.0, 0.0,
             1.0, 1.0, 0.0,
-		};
+        };
         unsigned int indices[] = {
             0, 1, 2,
             1, 3, 2
@@ -86,7 +87,9 @@ void MengerRenderer::createGui() {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
     ImGui::Begin("ImGui");
-    ImGui::Text("pitch: %f, yaw=%f", this->camera.getPitch(), this->camera.getYaw());
+    ImGui::SliderFloat("AO", &this->ao, 0.0f, 5.0f);
+    ImGui::SliderFloat("MARCH_HIT_DIST", &this->marchHitDist, 0.00001f, 0.1f);
+    ImGui::Text("pitch: %f, yaw=%f", this->camera->getPitch(), this->camera->getYaw());
     ImGui::End();
 }
 
@@ -96,10 +99,14 @@ void MengerRenderer::renderObjects() {
     this->shader->activate();
     this->shader->setVec2("iResolution", glm::vec2(this->screenWidth, this->screenHeight));
     // Camera
-    this->shader->setVec3("eye", this->camera.getOrigin());
-    this->shader->setVec3("forward", this->camera.getForward());
-    this->shader->setVec3("up", this->camera.getUp());
-    this->shader->setVec3("right", this->camera.getRight());
+    this->shader->setVec3("eye", this->camera->getOrigin());
+    this->shader->setVec3("forward", this->camera->getForward());
+    this->shader->setVec3("up", this->camera->getUp());
+    this->shader->setVec3("right", this->camera->getRight());
+
+    // Shader params
+    this->shader->setFloat("GLOBAL_AO", this->ao);
+    this->shader->setFloat("MARCH_HIT_DIST", this->marchHitDist);
 
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 }
@@ -111,44 +118,44 @@ void MengerRenderer::processInputs() {
         std::cout << "ESC KEY -> CLOSE WINDOW" << std::endl;
     }
     // Walk input
-    Camera camera = this->camera;
+    Camera* camera = this->camera;
     float deltaTime = this->deltaTime;
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
-        camera.translate(CameraDirection::FORWARD, true, deltaTime);
+        camera->translate(CameraDirection::FORWARD, true, deltaTime);
     }
     if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
-        camera.translate(CameraDirection::RIGHT, true, deltaTime);
+        camera->translate(CameraDirection::RIGHT, false, deltaTime);
     }
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
-        camera.translate(CameraDirection::FORWARD, false, deltaTime);
+        camera->translate(CameraDirection::FORWARD, false, deltaTime);
     }
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
-        camera.translate(CameraDirection::RIGHT, false, deltaTime);
+        camera->translate(CameraDirection::RIGHT, true, deltaTime);
     }
     if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) {
-        camera.translate(CameraDirection::UP, false, deltaTime);
+        camera->translate(CameraDirection::UP, false, deltaTime);
     }
     if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) {
-        camera.translate(CameraDirection::UP, true, deltaTime);
+        camera->translate(CameraDirection::UP, true, deltaTime);
     }
     // Rotation
     if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) {
-        camera.updateRotation(-1.0f, 0.0f);
+        camera->updateRotation(1.0f, 0.0f);
     }
     if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) {
-        camera.updateRotation(1.0f, 0.0f);
+        camera->updateRotation(-1.0f, 0.0f);
     }
     if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) {
-        camera.updateRotation(0.0f, -1.0f);
+        camera->updateRotation(0.0f, 1.0f);
     }
     if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS) {
-        camera.updateRotation(0.0f, 1.0f);
+        camera->updateRotation(0.0f, -1.0f);
     }
 }
 
 int main() {
     Camera camera(glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, 0.1f, 0.025f);
-    MengerRenderer m = MengerRenderer(800, 600, "window", camera);
+    MengerRenderer m = MengerRenderer(400, 400, "window", &camera);
     std::cout << "CALL RUN" << std::endl;
     return m.run();
 }
