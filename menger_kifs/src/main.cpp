@@ -10,13 +10,13 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 // https://github.com/blepfo/opengl_utils
-#include "opengl_utils/include/Camera.h"
-#include "opengl_utils/include/Shader.h"
-#include "opengl_utils/include/TwoTrianglesRenderer.h"
-#include "opengl_utils/include/texture.h"
+#include "GlUtils/Camera.hpp"
+#include "GlUtils/Shader.hpp"
+#include "GlUtils/TwoTrianglesRenderer.hpp"
+#include "GlUtils/TextureUtils.hpp"
 
 
-class MengerRenderer : public TwoTrianglesRenderer {
+class MengerRenderer : public GlUtils::TwoTrianglesRenderer {
     public: 
         // Need to declare overridden functions BEFORE constructor
         // to avoid vtable errors
@@ -29,14 +29,15 @@ class MengerRenderer : public TwoTrianglesRenderer {
             int screenWidth, 
             int screenHeight, 
             const char* windowName,
-            Camera* camera
-        ) : TwoTrianglesRenderer(fragmentShaderPath, screenWidth, screenHeight, windowName, true),
+            GlUtils::Camera* camera
+        ) : GlUtils::TwoTrianglesRenderer(fragmentShaderPath, screenWidth, screenHeight, windowName, true),
             camera(camera) {}
 
     protected:
-        Camera* camera;
+        GlUtils::Camera* camera;
         float ao=0.8;
         float marchHitDist=0.01;
+        float iTime=0.0f;
 };
 
 
@@ -46,6 +47,7 @@ void MengerRenderer::createGui() {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
     ImGui::Begin("ImGui");
+    ImGui::SliderFloat("iTime", &this->iTime, 0.0f, 20.0f);
     ImGui::SliderFloat("AO", &this->ao, 0.0f, 5.0f);
     ImGui::SliderFloat("MARCH_HIT_DIST", &this->marchHitDist, 0.00001f, 0.1f);
     ImGui::Text("pitch: %f, yaw=%f", this->camera->getPitch(), this->camera->getYaw());
@@ -63,15 +65,16 @@ void MengerRenderer::setUniforms() {
     // Shader params
     this->shader->setFloat("GLOBAL_AO", this->ao);
     this->shader->setFloat("MARCH_HIT_DIST", this->marchHitDist);
+    this->shader->setFloat("iTime", this->iTime);
 }
 
 
 void MengerRenderer::processInputs() {
-    Camera::standardWalkProcessing(this->camera, this->_window, this->deltaTime);
+    GlUtils::Camera::standardWalkProcessing(this->camera, this->_window, this->deltaTime);
 }
 
 int main() {
-    Camera camera(glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, 0.1f, 0.025f);
+    GlUtils::Camera camera(glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, 0.1f, 0.025f);
     MengerRenderer m = MengerRenderer("./src/test.fs", 400, 400, "window", &camera);
     std::cout << "CALL RUN" << std::endl;
     return m.run();

@@ -11,8 +11,7 @@ uniform vec3 right;
 uniform float MARCH_HIT_DIST;
 uniform float GLOBAL_AO;
 
-
-float iTime = 4.7;
+uniform float iTime;
 
 
 #define PI (3.141)
